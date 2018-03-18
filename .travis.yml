@@ -1,0 +1,131 @@
+dist: trusty
+sudo: false
+language: cpp
+
+os:
+  - osx
+
+env:
+  - BUILD_TYPE=Debug
+  - BUILD_TYPE=Release
+
+matrix:
+  include:
+  
+    # gcc Debug & Coverage
+    - os: linux
+      compiler: gcc
+      addons: &gcc6
+        apt:
+          packages:
+            - g++-6
+            - [libxrandr-dev, libxinerama-dev, libxcursor-dev, libxi-dev]
+          sources:
+            - ubuntu-toolchain-r-test
+            - kubuntu-backports
+      env: BUILD_TYPE=Coverage COMPILER_VER=6
+
+    # gcc Release
+    - os: linux
+      compiler: gcc
+      addons: *gcc6
+      env: BUILD_TYPE=Release COMPILER_VER=6
+
+    # clang Debug
+    - os: linux
+      compiler: clang
+      addons: &clang39
+        apt:
+          packages:
+            - [clang-3.9,llvm-3.9-dev,libstdc++-6-dev]
+            - [libxrandr-dev, libxinerama-dev, libxcursor-dev, libxi-dev]
+          sources:
+            - [ubuntu-toolchain-r-test,llvm-toolchain-precise-3.9]
+            - kubuntu-backports
+      env: BUILD_TYPE=Debug COMPILER_VER=3.9
+
+    # clang Release
+    - os: linux
+      compiler: clang
+      addons: *clang39
+      env: BUILD_TYPE=Release COMPILER_VER=3.9
+
+    # clang Debug w/ AddressSanitizer
+    - os: linux
+      compiler: clang
+      addons: &clang4
+        apt:
+          packages:
+            - [clang-4.0,libstdc++-6-dev]
+            - [libxrandr-dev, libxinerama-dev, libxcursor-dev, libxi-dev]
+          sources:
+            - [ubuntu-toolchain-r-test,llvm-toolchain-trusty-4.0]
+            - kubuntu-backports
+      env: BUILD_TYPE=Debug COMPILER_VER=4.0 USE_ASAN=1
+
+    # clang Release w/ UndefinedBehaviorSanitizer
+    - os: linux
+      compiler: clang
+      addons: *clang4
+      env: BUILD_TYPE=Release COMPILER_VER=4.0 USE_UBSAN=1
+
+   # clang Debug w/ AddressSanitizer
+    - os: linux
+      compiler: clang
+      addons: &clang5
+        apt:
+          packages:
+            - [clang-5.0,libstdc++-6-dev]
+            - [libxrandr-dev, libxinerama-dev, libxcursor-dev, libxi-dev]
+          sources:
+            - [ubuntu-toolchain-r-test,llvm-toolchain-trusty-5.0]
+            - kubuntu-backports
+      env: BUILD_TYPE=Debug COMPILER_VER=5.0 USE_ASAN=1
+
+    # clang Release w/ UndefinedBehaviorSanitizer
+    - os: linux
+      compiler: clang
+      addons: *clang5
+      env: BUILD_TYPE=Release COMPILER_VER=5.0 USE_UBSAN=1
+
+cache:
+  directories:
+    - $HOME/.local
+
+install:
+  - if [[ "${COMPILER_VER}" != "" ]]; then export CXX=${CXX}-${COMPILER_VER}; fi
+  - if [[ "${COMPILER_VER}" != "" ]]; then export CC=${CC}-${COMPILER_VER}; fi
+  - if [[ "${COMPILER_VER}" != "" ]]; then export GCOV=gcov-${COMPILER_VER}; fi
+  - |
+    if [[ "${TRAVIS_OS_NAME}" == "linux" ]]; then
+      mkdir -p $HOME/.local
+
+      CMAKE_URL="http://cmake.org/files/v3.9/cmake-3.9.0-Linux-x86_64.tar.gz"
+      if [ ! -e $HOME/.local/bin/cmake ]; then
+          echo "CMake not found in the cache, get and extract it..."
+          travis_retry curl -L ${CMAKE_URL} \
+              | tar -xz -C $HOME/.local --strip-components=1
+      else
+          echo "Using cached CMake"
+      fi
+    fi
+  - |
+    if [[ "${TRAVIS_OS_NAME}" == "osx" ]]; then
+      brew upgrade cmake || brew install cmake
+    fi
+
+script:
+  - |
+    if [[ "$BUILD_TYPE" == "Coverage" ]]; then
+      ctest -S cmake/CI.CTestScript.cmake --output-on-failure -VV
+    else
+      mkdir build && cd build && \
+      cmake -DCMAKE_BUILD_TYPE=$BUILD_TYPE .. && \
+      make -j4 && \
+      make test
+    fi
+after_success:
+  - |
+    if [[ "$BUILD_TYPE" == "Coverage" ]]; then
+      bash <(curl -s https://codecov.io/bash) -X gcov || echo "Codecov did not collect coverage reports"
+    fi

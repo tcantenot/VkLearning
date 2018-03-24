@@ -76,10 +76,54 @@ ENABLE_WARNING_MSVC(4201) // Nameless struct/union
 ENABLE_WARNING_CLANG(unknown-pragmas)
 
 
-#include <iostream>
+#include <cstring>
+#include <cstdint>
+#include <vector>
+
+#include <App/App.hpp>
+
+namespace {
+
+const std::vector<char const *> ValidationLayers =
+{
+	"VK_LAYER_LUNARG_standard_validation"
+};
+
+}
+
+bool CheckValidationLayerSupport()
+{
+	uint32_t layerCount = 0;
+	vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+
+	std::vector<VkLayerProperties> availableLayers(layerCount);
+	vkEnumerateInstanceLayerProperties(&layerCount, &availableLayers[0]);
+
+	for(char const * layerName : ValidationLayers)
+	{
+		bool bLayerFound = false;
+		for(VkLayerProperties const & layerProperty : availableLayers)
+		{
+			if(strcmp(layerName, layerProperty.layerName) == 0)
+			{
+				bLayerFound = true;
+				break;
+			}
+		}
+
+		if(!bLayerFound)
+		{
+			fmt::print("Layer \"{}\" not found", layerName);
+			return false;
+		}
+	}
+
+	return true;
+}
 
 int main()
 {
+	App app;
     glfwInit();
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -89,6 +133,12 @@ int main()
     vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
 
 	fmt::print("{} extension{} supported", extensionCount, (extensionCount > 1 ? "s" : ""));
+
+	bool bEnableValidationLayers = true;
+	if(bEnableValidationLayers && !CheckValidationLayerSupport())
+	{
+		return 1;
+	}
 
     glm::mat4 matrix;
     glm::vec4 vec;

@@ -42,7 +42,3 @@ target_compile_features(VkLearning PRIVATE cxx_std_14)
 target_set_warnings(VkLearning ENABLE ALL AS_ERROR ALL DISABLE Annoying) # Helper that can set default warning flags for you
 target_enable_lto(VkLearning optimized) #enable lto if available for non-debug configurations
 run_fixup(VkLearning "" "") # Copy dependencies next to the executable (DLLs for example)
-
-# Setup our project as the startup project for Visual so that people don't need to do it manually
-set_directory_properties(PROPERTIES VS_STARTUP_PROJECT VkLearning)
-

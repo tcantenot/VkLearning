@@ -179,8 +179,12 @@ class HelloWorldApp final : public App
 	public:
 		HelloWorldApp(): 
 			m_window(nullptr),
-			m_vkInstance(),
-			m_debugCallback()
+			m_vkInstance(VK_NULL_HANDLE),
+			m_debugCallback(),
+			m_vkPhysicalDevice(VK_NULL_HANDLE),
+			m_vkDevice(VK_NULL_HANDLE),
+			m_vkQueue(VK_NULL_HANDLE),
+			m_bEnableValidationLayers(true)
 		{
 		
 		}
@@ -203,7 +207,20 @@ class HelloWorldApp final : public App
 				return false;
 			}
 
-			setupDebugCallback();
+			if(!setupDebugCallback())
+			{
+				return false;
+			}
+
+			if(!selectPhysicalDevice())
+			{
+				return false;
+			}
+
+			if(!createLogicalDevice())
+			{
+				return false;
+			}
 
 			return true;
 		}
@@ -218,9 +235,16 @@ class HelloWorldApp final : public App
 
 		void cleanup() override
 		{
+			vkDestroyDevice(m_vkDevice, nullptr);
+			m_vkDevice = VK_NULL_HANDLE;
+
+			// The physical device is destroyed when the instance is
+			m_vkPhysicalDevice = VK_NULL_HANDLE;
+
 			DestroyDebugReportCallbackEXT(m_vkInstance, m_debugCallback, nullptr);
 
 			vkDestroyInstance(m_vkInstance, nullptr);
+			m_vkInstance = VK_NULL_HANDLE;
 
 			glfwDestroyWindow(m_window);
 			m_window = nullptr;
@@ -232,8 +256,6 @@ class HelloWorldApp final : public App
 
 		bool createInstance()
 		{
-			bool bEnableValidationLayers = true;
-		
 			// Extensions
 			{
 				uint32_t extensionCount = 0;
@@ -261,18 +283,18 @@ class HelloWorldApp final : public App
 			createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 			createInfo.pApplicationInfo = &appInfo;
 
-			auto extensions = getRequiredExtensions(bEnableValidationLayers);
+			auto extensions = getRequiredExtensions(m_bEnableValidationLayers);
 
 			createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
 			createInfo.ppEnabledExtensionNames = &extensions[0];
 
 			// Validation layers
-			if(bEnableValidationLayers && !CheckValidationLayerSupport())
+			if(m_bEnableValidationLayers && !CheckValidationLayerSupport())
 			{
 				return false;
 			}
 
-			if(bEnableValidationLayers)
+			if(m_bEnableValidationLayers)
 			{
 				createInfo.enabledLayerCount = static_cast<uint32_t>(ValidationLayers.size());
 				createInfo.ppEnabledLayerNames = &ValidationLayers[0];
@@ -336,10 +358,160 @@ class HelloWorldApp final : public App
 			return true;
 		}
 
+		int32_t findQueueFamily(VkPhysicalDevice device)
+		{
+			uint32_t queueFamilyCount = 0;
+			vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+
+			std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+			vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, &queueFamilies[0]);
+
+			for(uint32_t i = 0; i < queueFamilyCount; ++i)
+			{
+				VkQueueFamilyProperties const & queueFamily = queueFamilies[i];
+				if((queueFamily.queueCount > 0) && (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT))
+				{
+					return static_cast<int32_t>(i);
+				}
+			}
+
+			return -1;
+		}
+
+		bool selectPhysicalDevice()
+		{
+			uint32_t deviceCount = 0;
+			vkEnumeratePhysicalDevices(m_vkInstance, &deviceCount, nullptr);
+
+			if(deviceCount == 0)
+			{
+				fmt::print("Could not find device with Vulkan support\n");
+				return false;
+			}
+			
+			std::vector<VkPhysicalDevice> devices(deviceCount);
+			vkEnumeratePhysicalDevices(m_vkInstance, &deviceCount, &devices[0]);
+
+			fmt::print("{} Vulkan compatible device{} found\n", deviceCount, deviceCount > 1 ? "s" : "");
+			for(VkPhysicalDevice const & device : devices)
+			{
+				VkPhysicalDeviceProperties deviceProperties;
+				vkGetPhysicalDeviceProperties(device, &deviceProperties);
+
+				char const * deviceTypeStr = "Unknown device";
+				switch(deviceProperties.deviceType)
+				{
+					case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+						deviceTypeStr = "Discrete GPU";
+						break;
+					case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+						deviceTypeStr = "Integrated GPU";
+						break;
+					case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+						deviceTypeStr = "Virtual GPU";
+						break;
+					case VK_PHYSICAL_DEVICE_TYPE_CPU:
+						deviceTypeStr = "CPU";
+						break;
+					case VK_PHYSICAL_DEVICE_TYPE_OTHER:
+						deviceTypeStr = "\"Other\" device";
+						break;
+					default: break;
+				}
+
+				fmt::print("\t{}: {}\n", deviceTypeStr, deviceProperties.deviceName);
+				fmt::print("\t\tDriver version: {}\n", deviceProperties.driverVersion);
+				fmt::print("\t\tAPI version: {}\n", deviceProperties.apiVersion);
+				fmt::print("\t\tVendor ID: {}\n", deviceProperties.vendorID);
+				fmt::print("\t\tDevice ID: {}\n", deviceProperties.deviceID);
+			}
+
+			const auto isDeviceSuitable = [&](VkPhysicalDevice device)
+			{
+				#if 0
+				VkPhysicalDeviceProperties deviceProperties;
+				vkGetPhysicalDeviceProperties(device, &deviceProperties);
+
+				VkPhysicalDeviceFeatures deviceFeatures;
+				vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+
+				return	(deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) &&
+						(deviceFeatures.geometryShader);
+				#endif
+
+				bool bFoundQueue = findQueueFamily(device) >= 0;
+				return bFoundQueue;
+			};
+
+			for(VkPhysicalDevice const & device : devices)
+			{
+				if(isDeviceSuitable(device))
+				{
+					m_vkPhysicalDevice = device;
+					break;
+				}
+			}
+
+			if(m_vkPhysicalDevice == VK_NULL_HANDLE)
+			{
+				fmt::print("Could not find a suitable GPU\n");
+				return false;
+			}
+
+			return true;
+		}
+
+		bool createLogicalDevice()
+		{
+			int32_t queueFamilyIndex = findQueueFamily(m_vkPhysicalDevice);
+
+			VkDeviceQueueCreateInfo queueCreateInfo = { };
+			queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+			queueCreateInfo.queueFamilyIndex = queueFamilyIndex;
+			queueCreateInfo.queueCount = 1;
+
+			float queuePriority = 1.0f;
+			queueCreateInfo.pQueuePriorities = &queuePriority;
+
+			VkPhysicalDeviceFeatures deviceFeatures = { };
+
+			VkDeviceCreateInfo createInfo = { };
+			createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+			createInfo.pQueueCreateInfos = &queueCreateInfo;
+			createInfo.queueCreateInfoCount = 1;
+			createInfo.pEnabledFeatures = &deviceFeatures;
+			createInfo.enabledExtensionCount = 0;
+
+			if(m_bEnableValidationLayers)
+			{
+				createInfo.enabledLayerCount = static_cast<uint32_t>(ValidationLayers.size());
+				createInfo.ppEnabledLayerNames = &ValidationLayers[0];
+			}
+			else
+			{
+				createInfo.enabledLayerCount = 0;
+			}
+
+			if(vkCreateDevice(m_vkPhysicalDevice, &createInfo, nullptr, &m_vkDevice) != VK_SUCCESS)
+			{
+				fmt::print("Failed to create logical device\n");
+				return false;
+			}
+
+			// Get graphics queue from the device
+			vkGetDeviceQueue(m_vkDevice, queueFamilyIndex, 0, &m_vkQueue);
+
+			return true;
+		}
+
 	private:
 		GLFWwindow * m_window;
 		VkInstance m_vkInstance;
 		VkDebugReportCallbackEXT m_debugCallback;
+		VkPhysicalDevice m_vkPhysicalDevice;
+		VkDevice m_vkDevice;
+		VkQueue m_vkQueue;
+		bool m_bEnableValidationLayers;
 };
 
 int main()

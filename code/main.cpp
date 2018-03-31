@@ -211,9 +211,10 @@ class HelloWorldApp final : public App
 			m_vkGraphicsQueue(VK_NULL_HANDLE),
 			m_vkPresentQueue(VK_NULL_HANDLE),
 			m_vkSwapchain(VK_NULL_HANDLE),
-			m_vkSwapchainImages(),
 			m_vkSwapchainImageFormat(),
 			m_vkSwapchainExtent(),
+			m_vkSwapchainImages(),
+			m_vkSwapchainImageViews(),
 			m_bEnableValidationLayers(true)
 		{
 		
@@ -262,6 +263,11 @@ class HelloWorldApp final : public App
 				return false;
 			}
 
+			if(!createSwapchainImageViews())
+			{
+				return false;
+			}
+
 			return true;
 		}
 
@@ -275,8 +281,15 @@ class HelloWorldApp final : public App
 
 		void cleanup() override
 		{
+			for(VkImageView imageView : m_vkSwapchainImageViews)
+			{
+				vkDestroyImageView(m_vkDevice, imageView, nullptr);
+			}
+			m_vkSwapchainImageViews.clear();
+
 			vkDestroySwapchainKHR(m_vkDevice, m_vkSwapchain, nullptr);
 			m_vkSwapchain = VK_NULL_HANDLE;
+			m_vkSwapchainImages.clear();
 
 			vkDestroyDevice(m_vkDevice, nullptr);
 			m_vkDevice = VK_NULL_HANDLE;
@@ -792,6 +805,38 @@ class HelloWorldApp final : public App
 			return true;
 		}
 
+		bool createSwapchainImageViews()
+		{
+			m_vkSwapchainImageViews.resize(m_vkSwapchainImages.size());
+
+			VkImageViewCreateInfo createInfo = { };
+			createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+			createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			createInfo.format = m_vkSwapchainImageFormat;
+			createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+			createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			createInfo.subresourceRange.baseMipLevel = 0;
+			createInfo.subresourceRange.levelCount = 1;
+			createInfo.subresourceRange.baseArrayLayer = 0;
+			createInfo.subresourceRange.layerCount = 1;
+
+			for(size_t i = 0; i < m_vkSwapchainImageViews.size(); ++i)
+			{
+				createInfo.image = m_vkSwapchainImages[i];
+
+				if(vkCreateImageView(m_vkDevice, &createInfo, nullptr, &m_vkSwapchainImageViews[i]) != VK_SUCCESS)
+				{
+					fmt::print("Failed to create swapchain image view {}\n", i);
+					return false;
+				}
+			}
+
+			return true;
+		}
+
 	private:
 		GLFWwindow * m_window;
 		VkInstance m_vkInstance;
@@ -802,9 +847,10 @@ class HelloWorldApp final : public App
 		VkQueue m_vkGraphicsQueue;
 		VkQueue m_vkPresentQueue;
 		VkSwapchainKHR m_vkSwapchain;
-		std::vector<VkImage> m_vkSwapchainImages;
 		VkFormat m_vkSwapchainImageFormat;
 		VkExtent2D m_vkSwapchainExtent;
+		std::vector<VkImage> m_vkSwapchainImages;
+		std::vector<VkImageView> m_vkSwapchainImageViews;
 		bool m_bEnableValidationLayers;
 };
 

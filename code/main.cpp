@@ -79,6 +79,7 @@ ENABLE_WARNING_CLANG(unknown-pragmas)
 #include <cstring>
 #include <cstdint>
 #include <vector>
+#include <set>
 
 #include <App/App.hpp>
 
@@ -174,6 +175,17 @@ static void DestroyDebugReportCallbackEXT(
     }
 }
 
+struct QueueFamilyIndices
+{
+	int32_t graphicsFamily = -1;
+	int32_t presentFamily  = -1;
+
+	bool isComplete() const
+	{
+		return (graphicsFamily >= 0) && (presentFamily >= 0);
+	}
+};
+
 class HelloWorldApp final : public App
 {
 	public:
@@ -181,9 +193,11 @@ class HelloWorldApp final : public App
 			m_window(nullptr),
 			m_vkInstance(VK_NULL_HANDLE),
 			m_debugCallback(),
+			m_vkSurface(0),
 			m_vkPhysicalDevice(VK_NULL_HANDLE),
 			m_vkDevice(VK_NULL_HANDLE),
-			m_vkQueue(VK_NULL_HANDLE),
+			m_vkGraphicsQueue(VK_NULL_HANDLE),
+			m_vkPresentQueue(VK_NULL_HANDLE),
 			m_bEnableValidationLayers(true)
 		{
 		
@@ -208,6 +222,11 @@ class HelloWorldApp final : public App
 			}
 
 			if(!setupDebugCallback())
+			{
+				return false;
+			}
+
+			if(!createSurface())
 			{
 				return false;
 			}
@@ -242,6 +261,9 @@ class HelloWorldApp final : public App
 			m_vkPhysicalDevice = VK_NULL_HANDLE;
 
 			DestroyDebugReportCallbackEXT(m_vkInstance, m_debugCallback, nullptr);
+
+			vkDestroySurfaceKHR(m_vkInstance, m_vkSurface, nullptr);
+			m_vkSurface = 0;
 
 			vkDestroyInstance(m_vkInstance, nullptr);
 			m_vkInstance = VK_NULL_HANDLE;
@@ -358,8 +380,22 @@ class HelloWorldApp final : public App
 			return true;
 		}
 
-		int32_t findQueueFamily(VkPhysicalDevice device)
+		bool createSurface()
 		{
+			if(glfwCreateWindowSurface(m_vkInstance, m_window, nullptr, &m_vkSurface) != VK_SUCCESS)
+			{
+				fmt::print("Failed to create window surface\n");
+				m_vkSurface = 0;
+				return false;
+			}
+
+			return true;
+		}
+
+		QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device)
+		{
+			QueueFamilyIndices queueFamilyIndices;
+
 			uint32_t queueFamilyCount = 0;
 			vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
 
@@ -369,13 +405,28 @@ class HelloWorldApp final : public App
 			for(uint32_t i = 0; i < queueFamilyCount; ++i)
 			{
 				VkQueueFamilyProperties const & queueFamily = queueFamilies[i];
-				if((queueFamily.queueCount > 0) && (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT))
+
+				if(queueFamily.queueCount == 0)
+					continue;
+
+				if(queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)
 				{
-					return static_cast<int32_t>(i);
+					queueFamilyIndices.graphicsFamily = i;
 				}
+
+				VkBool32 presentSupport = false;
+				vkGetPhysicalDeviceSurfaceSupportKHR(device, i, m_vkSurface, &presentSupport);
+
+				if(presentSupport)
+				{
+					queueFamilyIndices.presentFamily = i;
+				}
+
+				if(queueFamilyIndices.isComplete())
+					break;
 			}
 
-			return -1;
+			return queueFamilyIndices;
 		}
 
 		bool selectPhysicalDevice()
@@ -439,8 +490,8 @@ class HelloWorldApp final : public App
 						(deviceFeatures.geometryShader);
 				#endif
 
-				bool bFoundQueue = findQueueFamily(device) >= 0;
-				return bFoundQueue;
+				QueueFamilyIndices queueFamilyIndices = findQueueFamilies(device);
+				return queueFamilyIndices.isComplete();
 			};
 
 			for(VkPhysicalDevice const & device : devices)
@@ -463,22 +514,31 @@ class HelloWorldApp final : public App
 
 		bool createLogicalDevice()
 		{
-			int32_t queueFamilyIndex = findQueueFamily(m_vkPhysicalDevice);
+			// TODO: query queue family indices only once
+			QueueFamilyIndices queueFamilyIndices = findQueueFamilies(m_vkPhysicalDevice);
 
-			VkDeviceQueueCreateInfo queueCreateInfo = { };
-			queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-			queueCreateInfo.queueFamilyIndex = queueFamilyIndex;
-			queueCreateInfo.queueCount = 1;
+			std::set<int32_t> uniqueQueueFamilies = { queueFamilyIndices.graphicsFamily, queueFamilyIndices.presentFamily };
+			std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+			queueCreateInfos.reserve(uniqueQueueFamilies.size());
 
 			float queuePriority = 1.0f;
-			queueCreateInfo.pQueuePriorities = &queuePriority;
+
+			for(int32_t queueFamiliy : uniqueQueueFamilies)
+			{
+				VkDeviceQueueCreateInfo queueCreateInfo = { };
+				queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+				queueCreateInfo.queueFamilyIndex = queueFamiliy;
+				queueCreateInfo.queueCount = 1;
+				queueCreateInfo.pQueuePriorities = &queuePriority;
+				queueCreateInfos.push_back(queueCreateInfo);
+			}
 
 			VkPhysicalDeviceFeatures deviceFeatures = { };
 
 			VkDeviceCreateInfo createInfo = { };
 			createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-			createInfo.pQueueCreateInfos = &queueCreateInfo;
-			createInfo.queueCreateInfoCount = 1;
+			createInfo.pQueueCreateInfos = &queueCreateInfos[0];
+			createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
 			createInfo.pEnabledFeatures = &deviceFeatures;
 			createInfo.enabledExtensionCount = 0;
 
@@ -498,8 +558,9 @@ class HelloWorldApp final : public App
 				return false;
 			}
 
-			// Get graphics queue from the device
-			vkGetDeviceQueue(m_vkDevice, queueFamilyIndex, 0, &m_vkQueue);
+			// Get graphics and present queues from the device (can be the same)
+			vkGetDeviceQueue(m_vkDevice, queueFamilyIndices.graphicsFamily, 0, &m_vkGraphicsQueue);
+			vkGetDeviceQueue(m_vkDevice, queueFamilyIndices.presentFamily,  0, &m_vkPresentQueue);
 
 			return true;
 		}
@@ -508,9 +569,11 @@ class HelloWorldApp final : public App
 		GLFWwindow * m_window;
 		VkInstance m_vkInstance;
 		VkDebugReportCallbackEXT m_debugCallback;
+		VkSurfaceKHR m_vkSurface;
 		VkPhysicalDevice m_vkPhysicalDevice;
 		VkDevice m_vkDevice;
-		VkQueue m_vkQueue;
+		VkQueue m_vkGraphicsQueue;
+		VkQueue m_vkPresentQueue;
 		bool m_bEnableValidationLayers;
 };
 
